@@ -73,7 +73,7 @@ void send_pkt (rel_t * r, flight_t * content) {
     // TODO: mark recv_buffer[LFR] as acked 
   }
   // TODO: handle EOF and ACK packets
-
+  conn_sendpkt (r->c, &pckt, ntohs(pckt.len));
 }
 
 /* Creates a new reliable protocol ion, returns NULL on failure.
@@ -170,7 +170,7 @@ void rel_read (rel_t *s)
       s->curr_win_tail->seq = s->LFS;
       s->curr_win_tail->size = data_size;
       s->curr_win_tail->ack_timer = 0;
-      //send_pkt(s, s->curr_win_tail);
+      send_pkt(s, s->curr_win_tail);
     } else if (data_size < 0){
       s->num_inflight_packets++;
       s->LFS++;
