@@ -49,13 +49,13 @@ struct reliable_state {
   int LAF;             // largest acceptable frame
   int LFR;             // last frame received
 
+  flight_t *eof_packet; 
+  flight_t *ack_packet;
+
   //need some sort of EOF
 
 };
 rel_t *rel_list;
-
-
-
 
 
 /* Creates a new reliable protocol ion, returns NULL on failure.
@@ -91,6 +91,14 @@ rel_t * rel_create (conn_t *c, const struct sockaddr_storage *ss,
   r -> LAR = 1;
   r -> LAF = r -> window_size + 1;
   r -> LFS = 0;
+
+  r -> eof_packet = (flight_t *)malloc(sizeof(flight_t *)); 
+  r -> eof_packet -> seq = -1;
+  r -> eof_packet -> size = -1;
+
+  r -> ack_packet = (flight_t *)malloc(sizeof(flight_t *));
+  r -> ack_packet -> seq = -1;
+  r -> ack_packet -> size = -2;
 
   return r;
 }
