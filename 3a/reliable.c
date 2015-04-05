@@ -62,19 +62,29 @@ void send_pkt (rel_t * r, flight_t * content) {
   packet_t pckt;
   memset(pckt.data, '\0', 500);
 
-  if (content->seq > 0) { // is a data packet
+  if (content->ack_timer >= 0) { // is a data packet
     pckt.len = htons(DATA_HEADER_LEN + content->size);
     pckt.seqno = htonl(content->seq);
-    pckt.ackno = htonl(r->LFR + 1);
     memcpy(pckt.data, content->data, content->size);
-    pckt.cksum = 0;
-    pckt.cksum = cksum (&pckt, ntohs(pckt.len));
-    content->ack_timer = 0; // set timer to zero
-    // TODO: mark recv_buffer[LFR] as acked 
+  } else if (content->size == -1) { // is an EOF packet
+    pckt.len = htons(DATA_HEADER_LEN);
+    pckt.seqno = htonl(content->seq);
+    memset(pckt.data, '\0', MAX_DATA_SIZE);
+  } else { // is an ACK packet
+    pckt.len = htons(ACK_HEADER_LEN);
   }
-  // TODO: handle EOF and ACK packets
+
+  pckt.ackno = htonl(r->LFR+1);
+  pckt.cksum = 0;
+  pckt.cksum = cksum (&pckt, ntohs(pckt.len));
+  // TODO: mark recv_buffer[LFR] as acked;
+
+  content->ack_timer = 0;
+
   conn_sendpkt (r->c, &pckt, ntohs(pckt.len));
 }
+
+
 
 /* Creates a new reliable protocol ion, returns NULL on failure.
  * Exactly one of c and ss should be NULL.  (ss is NULL when called
@@ -111,11 +121,11 @@ rel_t * rel_create (conn_t *c, const struct sockaddr_storage *ss,
   r -> LFS = 0;
 
   r -> eof_packet = (flight_t *)malloc(sizeof(flight_t *)); 
-  r -> eof_packet -> seq = -1;
+  r -> eof_packet -> ack_timer = -1;
   r -> eof_packet -> size = -1;
 
   r -> ack_packet = (flight_t *)malloc(sizeof(flight_t *));
-  r -> ack_packet -> seq = -1;
+  r -> ack_packet -> ack_timer = -1;
   r -> ack_packet -> size = -2;
 
   return r;
