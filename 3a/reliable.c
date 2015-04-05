@@ -23,9 +23,19 @@ struct reliable_state {
 
   conn_t *c;			/* This is the connection object */
  
-
   /* Add your own data fields below this */
-  
+  int window_size;     //Number of packets in flight
+  int time_out;        //Time until another transmission needed: milliseconds
+
+  int cur_seqno;       //the current sequence number
+
+  int LAR;             //last ack received
+  int LFS;             //last frame sent. not plus 1
+
+  int LAF;             //largest acceptable frame
+  int LFR;             //last frame received
+
+  //need some sort of EOF
 
 };
 rel_t *rel_list;
@@ -38,8 +48,7 @@ rel_t *rel_list;
  * Exactly one of c and ss should be NULL.  (ss is NULL when called
  * from rlib.c, while c is NULL when this function is called from
  * rel_demux.) */
-rel_t *
-rel_create (conn_t *c, const struct sockaddr_storage *ss,
+rel_t * rel_create (conn_t *c, const struct sockaddr_storage *ss,
 	    const struct config_common *cc)
 {
   rel_t *r;
@@ -63,13 +72,16 @@ rel_create (conn_t *c, const struct sockaddr_storage *ss,
   rel_list = r;
 
   /* Do any other initialization you need here */
-
+  r -> window_size = cc -> window;
+  r -> time_out = cc -> timeout;
+  r -> LAR = 1;
+  r -> LAF = r -> window_size + 1;
+  r -> 
 
   return r;
 }
 
-void
-rel_destroy (rel_t *r)
+void rel_destroy (rel_t *r)
 {
   if (r->next)
     r->next->prev = r->prev;
@@ -89,31 +101,26 @@ rel_destroy (rel_t *r)
  * ().  (Pass rel_create NULL for the conn_t, so it will know to
  * allocate a new connection.)
  */
-void
-rel_demux (const struct config_common *cc,
+void rel_demux (const struct config_common *cc,
 	   const struct sockaddr_storage *ss,
 	   packet_t *pkt, size_t len)
 {
 }
 
-void
-rel_recvpkt (rel_t *r, packet_t *pkt, size_t n)
+void rel_recvpkt (rel_t *r, packet_t *pkt, size_t n)
 {
 }
 
 
-void
-rel_read (rel_t *s)
+void rel_read (rel_t *s)
 {
 }
 
-void
-rel_output (rel_t *r)
+void rel_output (rel_t *r)
 {
 }
 
-void
-rel_timer ()
+void rel_timer ()
 {
   /* Retransmit any packets that need to be retransmitted */
 
