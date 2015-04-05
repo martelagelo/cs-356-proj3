@@ -90,7 +90,7 @@ rel_t * rel_create (conn_t *c, const struct sockaddr_storage *ss,
   r -> timeout = cc -> timeout;
   r -> LAR = 1;
   r -> LAF = r -> window_size + 1;
-  //r -> 
+  r -> LFS = 0;
 
   return r;
 }
@@ -128,9 +128,15 @@ void rel_recvpkt (rel_t *r, packet_t *pkt, size_t n)
 
 void rel_read (rel_t *s)
 {
+
   while (s->num_inflight_packets < s->window_size) { // TODO: Add EOF condition
-    s->curr_win_tail->next = (flight_t*)malloc(sizeof(flight_t*));
-    s->curr_win_tail = s->curr_win_tail->next;
+    if (s->curr_win_tail) {
+      s->curr_win_tail->next = (flight_t*)malloc(sizeof(flight_t*));
+      s->curr_win_tail = s->curr_win_tail->next;
+    } else {
+      s->curr_win_tail = (flight_t*)malloc(sizeof(flight_t*));
+      s->curr_win_head = s->curr_win_tail;
+    }
     int data_size = conn_input(s->c, s->curr_win_tail->data, MAX_DATA_LEN);
     if (data_size > 0) {
       s->num_inflight_packets++;
@@ -142,7 +148,7 @@ void rel_read (rel_t *s)
     } else if (data_size < 0){
       s->num_inflight_packets++;
       s->LFS++;
-      //send(s, ) pointer to a flight_t with seqno -1, data = eof something
+      //send_pkt(s, ) pointer to a flight_t with seqno -1, data = eof something
     } else {
       return;
     }
