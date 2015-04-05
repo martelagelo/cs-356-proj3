@@ -22,8 +22,10 @@ struct reliable_state {
   rel_t **prev;
 
   conn_t *c;			/* This is the connection object */
+ 
 
   /* Add your own data fields below this */
+  
 
 };
 rel_t *rel_list;
@@ -32,7 +34,7 @@ rel_t *rel_list;
 
 
 
-/* Creates a new reliable protocol session, returns NULL on failure.
+/* Creates a new reliable protocol ion, returns NULL on failure.
  * Exactly one of c and ss should be NULL.  (ss is NULL when called
  * from rlib.c, while c is NULL when this function is called from
  * rel_demux.) */
@@ -75,6 +77,7 @@ rel_destroy (rel_t *r)
   conn_destroy (r->c);
 
   /* Free any other allocated memory here */
+  free(r);
 }
 
 
