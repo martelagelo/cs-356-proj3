@@ -199,5 +199,13 @@ void rel_output (rel_t *r)
 void rel_timer ()
 {
   /* Retransmit any packets that need to be retransmitted */
-
+  rel_t * s;
+  flight_t * p;
+  for (s = rel_list; s != NULL; s = s->next) {
+    for (p = s->curr_win_head; p != NULL; p = p->next) {
+      p->ack_timer += s->timeout * 0.2;
+      if (p->ack_timer >= s->timeout) {
+        send_pkt(s, p);
+      }
+  }
 }
