@@ -18,16 +18,15 @@
 #define MAX_DATA_LEN 500
 
 struct inflight_pckt {
-  flight_t* next;
-  flight_t* prev;
+  struct inflight_pckt* next;
+  struct inflight_pckt* prev;
 
-  int seqno;
-  int data_size;
-  char data[MAX_DATA_LEN]
+  int seq;
+  int size;
+  char data[MAX_DATA_LEN];
   int ack_timer;
 };
 typedef struct inflight_pckt flight_t;
-
 
 struct reliable_state {
   rel_t *next;			/* Linked list for traversing all connections */
@@ -37,12 +36,15 @@ struct reliable_state {
  
   /* Add your own data fields below this */
   int window_size;     // Number of packets in flight
-  int time_out;        // Time until another transmission needed: milliseconds
+  int timeout;        // Time until another transmission needed: milliseconds
 
   int LAR;             // last ack received - (next expected seq num to recv)
   int LFS;             // last frame sent. not plus 1 (curr seq num)
 
-  flight_t* curr_win_head; // current head of in-flight packet window
+  flight_t* curr_win_head; // current head of in-flight packet window ('oldest' un-acked packet)
+  flight_t* curr_win_tail; // current tail of in-flight packet window (last sent packet)
+
+  int num_inflight_packets;
 
   int LAF;             // largest acceptable frame
   int LFR;             // last frame received
@@ -85,10 +87,10 @@ rel_t * rel_create (conn_t *c, const struct sockaddr_storage *ss,
 
   /* Do any other initialization you need here */
   r -> window_size = cc -> window;
-  r -> time_out = cc -> timeout;
+  r -> timeout = cc -> timeout;
   r -> LAR = 1;
   r -> LAF = r -> window_size + 1;
-  r -> 
+  //r -> 
 
   return r;
 }
@@ -126,6 +128,26 @@ void rel_recvpkt (rel_t *r, packet_t *pkt, size_t n)
 
 void rel_read (rel_t *s)
 {
+  while (s->num_inflight_packets < s->window_size) { // TODO: Add EOF condition
+    s->curr_win_tail->next = (flight_t*)malloc(sizeof(flight_t*));
+    s->curr_win_tail = s->curr_win_tail->next;
+    int data_size = conn_input(s->c, s->curr_win_tail->data, MAX_DATA_LEN);
+    if (data_size > 0) {
+      s->num_inflight_packets++;
+      s->LFS++;
+      s->curr_win_tail->seq = s->LFS;
+      s->curr_win_tail->size = data_size;
+      s->curr_win_tail->ack_timer = 0;
+      //send_pkt(s, s->curr_win_tail);
+    } else if (data_size < 0){
+      s->num_inflight_packets++;
+      s->LFS++;
+      //send(s, ) pointer to a flight_t with seqno -1, data = eof something
+    } else {
+      return;
+    }
+  }
+  return;
 }
 
 void rel_output (rel_t *r)
