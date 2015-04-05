@@ -17,6 +17,7 @@
 
 #define MAX_DATA_LEN 500
 #define DATA_HEADER_LEN 12
+#define ACK_HEADER_LEN 8
 
 struct inflight_pckt {
   struct inflight_pckt* next;
@@ -40,15 +41,15 @@ struct reliable_state {
   int timeout;        // Time until another transmission needed: milliseconds
 
   int LAR;             // last ack received - (next expected seq num to recv)
-  int LFS;             // last frame sent. not plus 1 (curr seq num)
+  int LFS;             // last frame sent. not plus 1 (curr seq num)                next_pkt_to_send-1
 
   flight_t* curr_win_head; // current head of in-flight packet window ('oldest' un-acked packet)
   flight_t* curr_win_tail; // current tail of in-flight packet window (last sent packet)
 
   int num_inflight_packets;
 
-  int LAF;             // largest acceptable frame
-  int LFR;             // last frame received
+  int LAF;             // largest acceptable frame              
+  int LFR;             // last frame received                   ack_expected-1
 
   flight_t *eof_packet; 
   flight_t *ack_packet;
@@ -109,6 +110,7 @@ rel_t * rel_create (conn_t *c, const struct sockaddr_storage *ss,
   r -> LAR = 1;
   r -> LAF = r -> window_size + 1;
   r -> LFS = 0;
+  r -> LFR = 0;
 
   r -> eof_packet = (flight_t *)malloc(sizeof(flight_t *)); 
   r -> eof_packet -> seq = -1;
@@ -149,6 +151,19 @@ void rel_demux (const struct config_common *cc,
 
 void rel_recvpkt (rel_t *r, packet_t *pkt, size_t n)
 {
+  if(n < ACK_HEADER_LEN || (n > ACK_HEADER_LEN && n < DATA_HEADER_LEN) || n != ntohs(pkt -> size) || check_cksum(pkt, n) == 0) {
+    send_pkt(r, r -> curr_win_head);
+    return;
+  }
+  else {
+    while(r->LFR+1 <= ntohl(pkt->ackno)-1 && ntohl(pkt->ackno)-1 < r->LFS) {
+      r -> curr_win_tail.ack_timer = 0;
+
+      
+      r -> LFR++;
+    }
+  }
+
 }
 
 
