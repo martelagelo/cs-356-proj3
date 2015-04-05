@@ -16,6 +16,7 @@
 #include "rlib.h"
 
 #define MAX_DATA_LEN 500
+#define DATA_HEADER_LEN 12
 
 struct inflight_pckt {
   struct inflight_pckt* next;
@@ -57,6 +58,23 @@ struct reliable_state {
 };
 rel_t *rel_list;
 
+void send_pkt (rel_t * r, flight_t * content) {
+  packet_t pckt;
+  memset(pckt.data, '\0', 500);
+
+  if (content->seq > 0) { // is a data packet
+    pckt.len = htons(DATA_HEADER_LEN + content->size);
+    pckt.seqno = htonl(content->seq);
+    pckt.ackno = htonl(r->LFR + 1);
+    memcpy(pckt.data, content->data, content->size);
+    pckt.cksum = 0;
+    pckt.cksum = cksum (&pckt, ntohs(pckt.len));
+    content->ack_timer = 0; // set timer to zero
+    // TODO: mark recv_buffer[LFR] as acked 
+  }
+  // TODO: handle EOF and ACK packets
+
+}
 
 /* Creates a new reliable protocol ion, returns NULL on failure.
  * Exactly one of c and ss should be NULL.  (ss is NULL when called
