@@ -15,6 +15,18 @@
 
 #include "rlib.h"
 
+#define MAX_DATA_LEN 500
+
+struct inflight_pckt {
+  flight_t* next;
+  flight_t* prev;
+
+  int seqno;
+  int data_size;
+  char data[MAX_DATA_LEN]
+  int ack_timer;
+};
+typedef struct inflight_pckt flight_t;
 
 
 struct reliable_state {
@@ -24,16 +36,16 @@ struct reliable_state {
   conn_t *c;			/* This is the connection object */
  
   /* Add your own data fields below this */
-  int window_size;     //Number of packets in flight
-  int time_out;        //Time until another transmission needed: milliseconds
+  int window_size;     // Number of packets in flight
+  int time_out;        // Time until another transmission needed: milliseconds
 
-  int cur_seqno;       //the current sequence number
+  int LAR;             // last ack received - (next expected seq num to recv)
+  int LFS;             // last frame sent. not plus 1 (curr seq num)
 
-  int LAR;             //last ack received
-  int LFS;             //last frame sent. not plus 1
+  flight_t* curr_win_head; // current head of in-flight packet window
 
-  int LAF;             //largest acceptable frame
-  int LFR;             //last frame received
+  int LAF;             // largest acceptable frame
+  int LFR;             // last frame received
 
   //need some sort of EOF
 
