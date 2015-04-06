@@ -27,6 +27,7 @@ struct inflight_pckt {
   int size;
   char data[MAX_DATA_LEN];
   int ack_timer;
+  int is_acked;
 };
 typedef struct inflight_pckt flight_t;
 
@@ -41,15 +42,15 @@ struct reliable_state {
   int timeout;        // Time until another transmission needed: milliseconds
 
   int LAR;             // last ack received - (next expected seq num to recv)
-  int LFS;             // last frame sent. not plus 1 (curr seq num)                next_pkt_to_send-1
+  int LFS;             // last frame sent.
 
   flight_t* curr_win_head; // current head of in-flight packet window ('oldest' un-acked packet)
   flight_t* curr_win_tail; // current tail of in-flight packet window (last sent packet)
 
   int num_inflight_packets;
 
-  int LAF;             // largest acceptable frame              
-  int LFR;             // last frame received                   ack_expected-1
+  int LAF;     // largest acceptable frame              
+  int LFR;             // last frame received
 
   flight_t *eof_packet; 
   flight_t *ack_packet;
@@ -70,7 +71,7 @@ void send_pkt (rel_t * r, flight_t * content) {
   } else if (content->size == -1) { // is an EOF packet
     pckt.len = htons(DATA_HEADER_LEN);
     pckt.seqno = htonl(content->seq);
-    memset(pckt.data, '\0', MAX_DATA_SIZE);
+    memset(pckt.data, '\0', MAX_DATA_LEN);
   } else { // is an ACK packet
     pckt.len = htons(ACK_HEADER_LEN);
   }
@@ -85,7 +86,16 @@ void send_pkt (rel_t * r, flight_t * content) {
   conn_sendpkt (r->c, &pckt, ntohs(pckt.len));
 }
 
-
+int check_cksum(packet_t *pkt, size_t n) {
+  uint16_t cs = pkt->cksum;
+  pkt->cksum = 0;
+  pkt->cksum = cksum(pkt, n);
+  if(cs == pkt->cksum)
+  {
+    return 1;
+  }
+  return 0;
+}
 
 /* Creates a new reliable protocol ion, returns NULL on failure.
  * Exactly one of c and ss should be NULL.  (ss is NULL when called
@@ -115,20 +125,21 @@ rel_t * rel_create (conn_t *c, const struct sockaddr_storage *ss,
   rel_list = r;
 
   /* Do any other initialization you need here */
-  r -> window_size = cc -> window;
-  r -> timeout = cc -> timeout;
-  r -> LAR = 1;
-  r -> LAF = r -> window_size + 1;
-  r -> LFS = 0;
-  r -> LFR = 0;
+  r->window_size = cc->window;
+  r->timeout = cc->timeout;
+  r->LAR = 0;
+  r->LAF = r->window_size + 1;
+  r->LFS = 0;
+  r->LFR = 0;
 
-  r -> eof_packet = (flight_t *)malloc(sizeof(flight_t *)); 
-  r -> eof_packet -> ack_timer = -1;
-  r -> eof_packet -> size = -1;
+  r->eof_packet = (flight_t *)malloc(sizeof(flight_t *)); 
+  r->eof_packet->ack_timer = -1;
+  r->eof_packet->size = -1;
+  r->eof_packet->is_acked = 0;
 
-  r -> ack_packet = (flight_t *)malloc(sizeof(flight_t *));
-  r -> ack_packet -> ack_timer = -1;
-  r -> ack_packet -> size = -2;
+  r->ack_packet = (flight_t *)malloc(sizeof(flight_t *));
+  r->ack_packet->ack_timer = -1;
+  r->ack_packet->size = -2;
 
   return r;
 }
@@ -161,21 +172,46 @@ void rel_demux (const struct config_common *cc,
 
 void rel_recvpkt (rel_t *r, packet_t *pkt, size_t n)
 {
-  if(n < ACK_HEADER_LEN || (n > ACK_HEADER_LEN && n < DATA_HEADER_LEN) || n != ntohs(pkt -> size) || check_cksum(pkt, n) == 0) {
-    send_pkt(r, r -> curr_win_head);
+  if (
+    n < ACK_HEADER_LEN || // too short
+    (n > ACK_HEADER_LEN && n < DATA_HEADER_LEN) || // impossible
+    n != ntohs(pkt->len) || // wrong packet length
+    check_cksum(pkt, n) == 0 // bad checksum
+  ) {
+    //send_pkt(r, r->ack_packet);
     return;
-  }
-  else {
-    while(r->LFR+1 <= ntohl(pkt->ackno)-1 && ntohl(pkt->ackno)-1 < r->LFS) {
-      r -> curr_win_tail.ack_timer = 0;
-
-      
-      r -> LFR++;
+  } else {
+    flight_t * p;
+    for (p = r->curr_win_head; p != NULL; p=p->next) {
+      if (p->seq == (ntohl(pkt->ackno) - 1)) {
+        p->is_acked = 1;
+        break;
+      }
+    }
+    for (p = r->curr_win_head; p != NULL; p=p->next) {
+      if (p->is_acked == 0) {
+        break;
+      } else {
+        r->curr_win_head = p->next;
+        if (r->curr_win_head != NULL) {
+          free(r->curr_win_head->prev);
+        } else {
+          break;
+        }
+      }
     }
   }
-
 }
-
+      // if (p->is_acked == 1) {
+      //   r->curr_win_head = p;
+      //   free(p->prev);
+      //   r->curr_win_head->prev = NULL;
+      // } else {
+      //   r->curr_win_head = p->next;
+      //   free(p);
+      //   r->curr_win_head->prev = NULL;
+      //   break; // stop as soon as an unacked packet is reached
+      // }
 
 void rel_read (rel_t *s)
 {
@@ -189,18 +225,21 @@ void rel_read (rel_t *s)
       s->curr_win_head = s->curr_win_tail;
     }
     int data_size = conn_input(s->c, s->curr_win_tail->data, MAX_DATA_LEN);
-    if (data_size > 0) {
+    if (data_size > 0) { // is data packet
       s->num_inflight_packets++;
+        // SHOULD equal LFS - LAR
       s->LFS++;
       s->curr_win_tail->seq = s->LFS;
       s->curr_win_tail->size = data_size;
       s->curr_win_tail->ack_timer = 0;
+      s->curr_win_tail->is_acked = 0;
       send_pkt(s, s->curr_win_tail);
-    } else if (data_size < 0){
+    } else if (data_size < 0){ // is EOF
       s->num_inflight_packets++;
+        // SHOULD equal LFS - LAR
       s->LFS++;
-      //send_pkt(s, ) pointer to a flight_t with seqno -1, data = eof something
-    } else {
+      send_pkt(s, s->eof_packet);
+    } else { // IS other
       return;
     }
   }
@@ -214,5 +253,14 @@ void rel_output (rel_t *r)
 void rel_timer ()
 {
   /* Retransmit any packets that need to be retransmitted */
-
+  rel_t * s;
+  flight_t * p;
+  for (s = rel_list; s != NULL; s = s->next) {
+    for (p = s->curr_win_head; p != NULL; p = p->next) {
+      p->ack_timer += s->timeout * 0.2;
+      if (p->ack_timer >= s->timeout) {
+        send_pkt(s, p);
+      }
+    }
+  }
 }
