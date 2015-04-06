@@ -193,6 +193,7 @@ void rel_recvpkt (rel_t *r, packet_t *pkt, size_t n)
         break;
       } else {
         r->curr_win_head = p->next;
+        r->num_inflight_packets--;
         if (r->curr_win_head != NULL) {
           free(r->curr_win_head->prev);
         } else {
@@ -215,9 +216,10 @@ void rel_recvpkt (rel_t *r, packet_t *pkt, size_t n)
 
 void rel_read (rel_t *s)
 {
-
+	printf("Num Inflight packets: %d\n Window Size: %d\n", s->num_inflight_packets, s->window_size);
+  
   while (s->num_inflight_packets < s->window_size) { // TODO: Add EOF condition
-    if (s->curr_win_tail) {
+    if (s->curr_win_head) {
       s->curr_win_tail->next = (flight_t*)malloc(sizeof(flight_t*));
       s->curr_win_tail = s->curr_win_tail->next;
     } else {
