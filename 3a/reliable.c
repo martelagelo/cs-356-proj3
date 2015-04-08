@@ -56,6 +56,8 @@ struct reliable_state {
   flight_t *ack_packet;
 
   //need some sort of EOF
+  int eof;
+  int remote_eof;
 
 };
 rel_t *rel_list;
@@ -68,10 +70,14 @@ void send_pkt (rel_t * r, flight_t * content) {
     pckt.len = htons(DATA_HEADER_LEN + content->size);
     pckt.seqno = htonl(content->seq);
     memcpy(pckt.data, content->data, content->size);
+    content->ack_timer = 0;
+    fprintf(stderr, "Sending SeqNum: %u", content->seq);
   } else if (content->size == -1) { // is an EOF packet
     pckt.len = htons(DATA_HEADER_LEN);
     pckt.seqno = htonl(content->seq);
     memset(pckt.data, '\0', MAX_DATA_LEN);
+    content->ack_timer = 0;
+    fprintf(stderr, "Sending SeqNum: %u", content->seq);
   } else { // is an ACK packet
     pckt.len = htons(ACK_HEADER_LEN);
   }
@@ -80,9 +86,6 @@ void send_pkt (rel_t * r, flight_t * content) {
   pckt.cksum = 0;
   pckt.cksum = cksum (&pckt, ntohs(pckt.len));
   // TODO: mark recv_buffer[LFR] as acked;
-
-  content->ack_timer = 0;
-
   conn_sendpkt (r->c, &pckt, ntohs(pckt.len));
 }
 
@@ -131,6 +134,8 @@ rel_t * rel_create (conn_t *c, const struct sockaddr_storage *ss,
   r->LAF = r->window_size + 1;
   r->LFS = 0;
   r->LFR = 0;
+  r->eof = 0;
+  r->remote_eof = 0;
 
   r->eof_packet = (flight_t *)malloc(sizeof(flight_t *)); 
   r->eof_packet->ack_timer = -1;
@@ -172,6 +177,7 @@ void rel_demux (const struct config_common *cc,
 
 void rel_recvpkt (rel_t *r, packet_t *pkt, size_t n)
 {
+  // TODO: if curr win head undefined add dummy value
   if (
     n < ACK_HEADER_LEN || // too short
     (n > ACK_HEADER_LEN && n < DATA_HEADER_LEN) || // impossible
@@ -182,24 +188,39 @@ void rel_recvpkt (rel_t *r, packet_t *pkt, size_t n)
     return;
   } else {
     flight_t * p;
-    for (p = r->curr_win_head; p != NULL; p=p->next) {
+    for (p = r->curr_win_head; p != NULL; p=p->next) { // mark packet in sent buffer w/ matching seq num as Acked
       if (p->seq == (ntohl(pkt->ackno) - 1)) {
         p->is_acked = 1;
         break;
       }
     }
-    for (p = r->curr_win_head; p != NULL; p=p->next) {
-      if (p->is_acked == 0) {
-        break;
-      } else {
-        r->curr_win_head = p->next;
-        r->num_inflight_packets--;
-        if (r->curr_win_head != NULL) {
-          free(r->curr_win_head->prev);
-        } else {
+    if (ntohs(pkt->len) == ACK_HEADER_LEN) { // is an ack
+      for (p = r->curr_win_head; p != NULL; p=p->next) { // remove the first contigous block of acked things in sent buffer
+        if (p->is_acked == 0) {
           break;
+        } else {
+          r->curr_win_head = p->next;
+          r->num_inflight_packets--;
+          if (r->curr_win_head != NULL && r->curr_win_head != r->eof_packet) {
+            free(r->curr_win_head->prev);
+          } else {
+            break;
+          }
         }
       }
+      rel_read(r);
+    } else { // is data
+      if(ntohs(pkt->len) == DATA_HEADER_LEN) {
+        r->remote_eof = 1;
+      }
+      if (ntohl(pkt->seqno) == (r->LFR + 1) && (conn_bufspace(r->c) >= ntohs(pkt->len)) ) { // this is the expected packet
+        r->LFR++;
+        if(r->remote_eof && r->eof) {
+          rel_destroy(r);
+        }
+        conn_output(r->c, pkt->data, ntohs(pkt->len) - DATA_HEADER_LEN);
+      }
+      send_pkt(r, r->ack_packet);
     }
   }
 }
@@ -218,7 +239,7 @@ void rel_read (rel_t *s)
 {
 	printf("Num Inflight packets: %d\n Window Size: %d\n", s->num_inflight_packets, s->window_size);
   
-  while (s->num_inflight_packets < s->window_size) { // TODO: Add EOF condition
+  while (s->num_inflight_packets < s->window_size && !(s->eof)) {
     if (s->curr_win_head) {
       s->curr_win_tail->next = (flight_t*)malloc(sizeof(flight_t*));
       s->curr_win_tail = s->curr_win_tail->next;
@@ -240,6 +261,8 @@ void rel_read (rel_t *s)
       s->num_inflight_packets++;
         // SHOULD equal LFS - LAR
       s->LFS++;
+      s->eof = 1;
+      s->eof_packet->seq = s->LFS;
       send_pkt(s, s->eof_packet);
     } else { // IS other
       return;
