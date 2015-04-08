@@ -86,10 +86,10 @@ void send_pkt (rel_t * r, flight_t * content) {
   conn_sendpkt (r->c, &pckt, ntohs(pckt.len));
 }
 
-int check_cksum(packet_t *pkt, size_t n) {
-  uint16_t cs = pkt->cksum;
+int check_sum(packet_t *pkt, int size) {
+  int cs = pkt->cksum;
   pkt->cksum = 0;
-  pkt->cksum = cksum(pkt, n);
+  pkt->cksum = cksum(pkt, size);
   if(cs == pkt->cksum)
   {
     return 1;
@@ -176,7 +176,7 @@ void rel_recvpkt (rel_t *r, packet_t *pkt, size_t n)
     n < ACK_HEADER_LEN || // too short
     (n > ACK_HEADER_LEN && n < DATA_HEADER_LEN) || // impossible
     n != ntohs(pkt->len) || // wrong packet length
-    check_cksum(pkt, n) == 0 // bad checksum
+    check_sum(pkt, n) == 0 // bad checksum
   ) {
     //send_pkt(r, r->ack_packet);
     return;
