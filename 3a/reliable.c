@@ -201,14 +201,16 @@ void rel_recvpkt (rel_t *r, packet_t *pkt, size_t n)
         } else {
           r->curr_win_head = p->next;
           r->num_inflight_packets--;
-          if (r->curr_win_head != NULL && r->curr_win_head != r->eof_packet) {
-            free(r->curr_win_head->prev);
+          if (r->curr_win_head != NULL) {
+            if(r->curr_win_head->prev != NULL) {
+            	free(r->curr_win_head->prev);	
+            }
           } else {
             break;
           }
         }
       }
-      rel_read(r);
+      //rel_read(r);
     } else { // is data
       if(ntohs(pkt->len) == DATA_HEADER_LEN) {
         r->remote_eof = 1;
@@ -242,10 +244,13 @@ void rel_read (rel_t *s)
   while (s->num_inflight_packets < s->window_size && !(s->eof)) {
     if (s->curr_win_head) {
       s->curr_win_tail->next = (flight_t*)malloc(sizeof(flight_t*));
+      s->curr_win_tail->prev = s->curr_win_tail; 
       s->curr_win_tail = s->curr_win_tail->next;
+
     } else {
       s->curr_win_tail = (flight_t*)malloc(sizeof(flight_t*));
       s->curr_win_head = s->curr_win_tail;
+      s->curr_win_tail->prev = NULL;
     }
     int data_size = conn_input(s->c, s->curr_win_tail->data, MAX_DATA_LEN);
     if (data_size > 0) { // is data packet
@@ -284,6 +289,7 @@ void rel_timer ()
     for (p = s->curr_win_head; p != NULL; p = p->next) {
       p->ack_timer += s->timeout * 0.2;
       if (p->ack_timer >= s->timeout) {
+      	printf("Timeout\n");
         send_pkt(s, p);
       }
     }
