@@ -32,10 +32,10 @@ struct inflight_pckt {
 typedef struct inflight_pckt flight_t;
 
 struct reliable_state {
-  rel_t *next;			/* Linked list for traversing all connections */
+  rel_t *next;      /* Linked list for traversing all connections */
   rel_t **prev;
 
-  conn_t *c;			/* This is the connection object */
+  conn_t *c;      /* This is the connection object */
  
   /* Add your own data fields below this */
   int window_size;     // Number of packets in flight
@@ -71,13 +71,13 @@ void send_pkt (rel_t * r, flight_t * content) {
     pckt.seqno = htonl(content->seq);
     memcpy(pckt.data, content->data, content->size);
     content->ack_timer = 0;
-    fprintf(stderr, "Sending SeqNum: %u", content->seq);
+    fprintf(stderr, "DATA:Sending SeqNum: %u\n", content->seq);
   } else if (content->size == -1) { // is an EOF packet
     pckt.len = htons(DATA_HEADER_LEN);
     pckt.seqno = htonl(content->seq);
     memset(pckt.data, '\0', MAX_DATA_LEN);
     content->ack_timer = 0;
-    fprintf(stderr, "Sending SeqNum: %u", content->seq);
+    fprintf(stderr, "EOF:Sending SeqNum: %u\n", content->seq);
   } else { // is an ACK packet
     pckt.len = htons(ACK_HEADER_LEN);
   }
@@ -87,6 +87,24 @@ void send_pkt (rel_t * r, flight_t * content) {
   pckt.cksum = cksum (&pckt, ntohs(pckt.len));
   // TODO: mark recv_buffer[LFR] as acked;
   conn_sendpkt (r->c, &pckt, ntohs(pckt.len));
+}
+
+void display_list(flight_t* head) {
+  flight_t *temp;
+  temp=head;
+  while(temp != NULL) {
+    fprintf(stderr, "%d, %d, %s\n", temp->is_acked, temp->seq, temp->data);
+    temp=temp->next;
+  }
+}
+
+flight_t* get_eof_packet(int seqno) {
+  flight_t* eof_packet = (flight_t *)malloc(sizeof(flight_t *)); 
+  eof_packet->ack_timer = -1;
+  eof_packet->size = -1;
+  eof_packet->is_acked = 0;
+  eof_packet->seq = seqno;
+  return eof_packet;
 }
 
 int check_sum(packet_t *pkt, int size) {
@@ -105,7 +123,7 @@ int check_sum(packet_t *pkt, int size) {
  * from rlib.c, while c is NULL when this function is called from
  * rel_demux.) */
 rel_t * rel_create (conn_t *c, const struct sockaddr_storage *ss,
-	    const struct config_common *cc)
+      const struct config_common *cc)
 {
   rel_t *r;
 
@@ -170,8 +188,8 @@ void rel_destroy (rel_t *r)
  * allocate a new connection.)
  */
 void rel_demux (const struct config_common *cc,
-	   const struct sockaddr_storage *ss,
-	   packet_t *pkt, size_t len)
+     const struct sockaddr_storage *ss,
+     packet_t *pkt, size_t len)
 {
 }
 
@@ -188,27 +206,27 @@ void rel_recvpkt (rel_t *r, packet_t *pkt, size_t n)
     return;
   } else {
     flight_t * p;
-    for (p = r->curr_win_head; p != NULL; p=p->next) { // mark packet in sent buffer w/ matching seq num as Acked
-      if (p->seq == (ntohl(pkt->ackno) - 1)) {
-        p->is_acked = 1;
-        break;
-      }
-    }
     if (ntohs(pkt->len) == ACK_HEADER_LEN) { // is an ack
+      for (p = r->curr_win_head; p != NULL; p=p->next) { // mark packet in sent buffer w/ matching seq num as Acked
+        if (p->seq == (ntohl(pkt->ackno) - 1)) {
+          p->is_acked = 1;
+          r->num_inflight_packets--;
+          rel_read(r);
+          break;
+        }
+      }
       for (p = r->curr_win_head; p != NULL; p=p->next) { // remove the first contigous block of acked things in sent buffer
         if (p->is_acked == 0) {
           break;
         } else {
           r->curr_win_head = p->next;
-          r->num_inflight_packets--;
-          if (r->curr_win_head != NULL && r->curr_win_head != r->eof_packet) {
+          if (r->curr_win_head != NULL) {
             free(r->curr_win_head->prev);
           } else {
             break;
           }
         }
       }
-      rel_read(r);
     } else { // is data
       if(ntohs(pkt->len) == DATA_HEADER_LEN) {
         r->remote_eof = 1;
@@ -237,8 +255,12 @@ void rel_recvpkt (rel_t *r, packet_t *pkt, size_t n)
 
 void rel_read (rel_t *s)
 {
-	printf("Num Inflight packets: %d\n Window Size: %d\n", s->num_inflight_packets, s->window_size);
+  printf("Num Inflight packets: %d\n Window Size: %d\n", s->num_inflight_packets, s->window_size);
   
+  if (s->eof) {
+    return;
+  }
+
   while (s->num_inflight_packets < s->window_size && !(s->eof)) {
     if (s->curr_win_head) {
       s->curr_win_tail->next = (flight_t*)malloc(sizeof(flight_t*));
@@ -249,6 +271,7 @@ void rel_read (rel_t *s)
     }
     int data_size = conn_input(s->c, s->curr_win_tail->data, MAX_DATA_LEN);
     if (data_size > 0) { // is data packet
+      fprintf(stderr, "got data: %s\n", s->curr_win_tail->data);
       s->num_inflight_packets++;
         // SHOULD equal LFS - LAR
       s->LFS++;
@@ -262,8 +285,7 @@ void rel_read (rel_t *s)
         // SHOULD equal LFS - LAR
       s->LFS++;
       s->eof = 1;
-      s->eof_packet->seq = s->LFS;
-      send_pkt(s, s->eof_packet);
+      send_pkt(s, get_eof_packet(s->LFS));
     } else { // IS other
       return;
     }
